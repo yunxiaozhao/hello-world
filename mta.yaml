@@ -40,13 +40,37 @@ modules:
           url: ~{srv-url}
           forwardAuthToken: true
       - name: hello-world-auth
+      - name: mtx-api
+        group: destinations
+        properties:
+          name: mtx-api # must be used in xs-app.json as well
+          url: ~{mtx-url}
+    properties:
+      TENANT_HOST_PATTERN: "^(.*)-${default-uri}"
+    provides:
+      - name: app-api
+        properties:
+          app-protocol: ${protocol}
+          app-uri: ${default-uri}
 
-  - name: hello-world-db-deployer
-    type: hdb
-    path: gen/db
+  - name: hello-world-mtx
+    type: nodejs
+    path: gen/mtx/sidecar
+    build-parameters:
+      builder: npm-ci
     parameters:
-      buildpack: nodejs_buildpack
+      memory: 256M
+      disk-quota: 512M
+    provides:
+      - name: mtx-api
+        properties:
+          mtx-url: ${default-url}
     requires:
+      - name: hello-world-auth
+      - name: hello-world-registry
+      - name: app-api
+        properties:
+          SUBSCRIPTION_URL: ~{app-protocol}://\${tenant_subdomain}-~{app-uri}
       - name: hello-world-db
 
 resources:
@@ -58,9 +82,29 @@ resources:
       path: ./xs-security.json
       config:
         xsappname: hello-world-${org}-${space}
-        tenant-mode: dedicated
-  - name: hello-world-db
-    type: com.sap.xs.hdi-container
+        tenant-mode: shared
+  - name: hello-world-registry
+    type: org.cloudfoundry.managed-service
+    requires:
+      - name: mtx-api
     parameters:
-      service: hana
-      service-plan: hdi-shared
+      service: saas-registry
+      service-plan: application
+      config:
+        xsappname: hello-world-${org}-${space}
+        appName: hello-world-${org}-${space}
+        displayName: hello-world
+        description: A simple CAP project.
+        category: 'Category'
+        appUrls:
+          getDependencies: ~{mtx-api/mtx-url}/-/cds/saas-provisioning/dependencies
+          onSubscription: ~{mtx-api/mtx-url}/-/cds/saas-provisioning/tenant/{tenantId}
+          onSubscriptionAsync: true
+          onUnSubscriptionAsync: true
+          onUpdateDependenciesAsync: true
+          callbackTimeoutMillis: 300000 # Increase if your deployments are taking longer than that
+  - name: hello-world-db
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: service-manager
+      service-plan: container
